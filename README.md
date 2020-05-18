@@ -1,4 +1,4 @@
 SanDOS
 ======
 
-DOS like operating system written by me. Takes inspiration from MiniDOS. 
+DOS like operating system written for FASM. Needs some more work. Will check in when i get more time.
