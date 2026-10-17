@@ -61,8 +61,6 @@ call print_string
 call read_char
 
 ; testing the clear_screen function
-;call clear_screen
-mov es , SEG message6
 call clear_screen
 
 ; testing the  set_cursor function

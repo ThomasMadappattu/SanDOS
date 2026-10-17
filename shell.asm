@@ -21,6 +21,8 @@
 shell_initialize:
 		mov   [save_address],dx    
 		mov   [cs_save],ax		   
+		mov   [shell_ss],ss
+		mov   [shell_sp],sp
 		push  cs			    
 		pop   ds			    
 		push  ds			   
@@ -32,6 +34,18 @@ shell_initialize:
 		cli
 		call install_interrupts
 		sti
+		jmp shell_loop
+
+; entered when a program terminates : restore the shell's segments and stack
+shell_restart:
+		cli
+		mov   ax,cs
+		mov   ds,ax
+		mov   es,ax
+		mov   ss,[shell_ss]
+		mov   sp,[shell_sp]
+		sti
+		cld
 shell_loop:
 	  call print_prompt
 	  mov di , cmd_buffer
@@ -59,56 +73,39 @@ shell_loop:
 	  jnc .do_dir
 
     .load_prog:
+       cmp byte [cmd_buffer] , 0
+       je shell_loop
 
        call  ConvertFileName		   
-
-
 
        stc
        mov di ,  RootConvertedFileName
        add di , 8
        mov si , com_ext
        call string_equal
-       jnc .file_extension_ok
+       jnc .run_com
 
        stc
        mov di ,  RootConvertedFileName
        add di , 8
        mov si , exe_ext
        call string_equal
-       jnc .file_extension_ok
+       jnc .exe_unsupported
 
-
+       mov si , bad_cmd_msg
+       call print_string
        jmp   shell_loop 		  
-.file_extension_ok:
-
- 
-	mov   ax,0x80			 
-	shl   ax, 6			   
-	mov   word[end_memory],ax	    
-	int   12h			   
-	shl   ax,6			   
+.exe_unsupported:
+       mov si , exe_msg
+       call print_string
+       jmp shell_loop
+.run_com:
+	int   12h			   ; ax = KB of conventional memory
+	shl   ax,6			   ; in paragraphs
 	mov   word[top_memory],ax
-
-	sub   ax,512 / 16		   
-	mov   es,ax			   
-	sub   ax,2048 / 16		   
-	mov   ss,ax			   
-	mov   sp,2048			
-
-	mov   cx, 11			
-	mov   si, RootConvertedFileName
-	mov   di,[save_address]
-	rep   movsb			    
-
-	push  es			    
-	mov   bx,[cs_save]
-	push  bx			    
-	xor   bx,bx			    
-	retf				    
-	jmp    $
-
-
+	mov   word[end_memory],PROG_SEG + 0x1000
+	call  load_com			   ; only returns if loading failed
+	jmp   shell_loop
 
     .do_cls:
 	  xor dx , dx
@@ -147,6 +144,10 @@ exe_ext    db 'EXE',0
 initial_msg  db  'Welcome to 1K-DOS :) ',13,10, '             ^ ^ ^',13,10, '            ( *|* )',13,10, '            /  ~  \',13,10, '           /       \',13,10, '           ---------',13,10,'             |   |',13,10, '            _|  _|        by S@ndM@n ',13,10 ,0
 help_msg db 13 , 10 ,'CLS - Clears  the Screen ' ,13 , 10 , 'HELP - Displays This Info ' , 13,10 , '<FILENAME> - Executes Given File' ,13 , 10,'DIR -List Contents of Root Directory' ,13 , 10, 0
 save_address dw 0
+shell_ss dw 0
+shell_sp dw 0
+bad_cmd_msg db 'Bad command or file name',13,10,0
+exe_msg db 'EXE files are not supported yet',13,10,0
 cs_save 	dw 0
 
 include 'util.asm'

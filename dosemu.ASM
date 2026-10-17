@@ -39,9 +39,8 @@ install_interrupts:
 
 
 int20_handler:
-		  je shell_loop
-		  iret
-
+		  jmp shell_restart
+		  
 
 int21_handler:
 
@@ -91,7 +90,7 @@ int21:
 ;  terminate program                                 ;
 ;====================================================; 
 int21_00:
-	jmp   shell_loop		       ; Jump to int20 label
+	jmp   shell_restart		       ; Terminate, back to the shell
 ;====================================================;
 ;  read character with echo                          ;
 ;====================================================; 
@@ -130,9 +129,9 @@ int21_07:
 ;====================================================; 
 int21_09:
 	push  bx			   ; Save BX
-	mov   bx,dx			   ; Put whats in DX into AX
+	mov   bx,dx			   ; Put whats in DX into BX
 Next:
-	mov   al,byte[es:bx]		   ; Move byte that ES:BX ponts to, into AL
+	mov   al,byte[bx]		   ; Move byte that DS:BX ponts to, into AL
 	cmp   al,'$'			   ; Is it a '$' ?.
 	je    Done			   ; If yes, jump label Done
 	call  print_char		      ; If not call char function.
@@ -222,26 +221,46 @@ int21_35:
 ; alloc ram memory                                   ;
 ;====================================================; 
 int21_48:
-	mov   ax,word [cs:end_memory]	   ; Move whats in the var [cs:end_memory] into AX
-	add   ax,bx			   ; Add BX to the var
-	cmp   ax,word [cs:top_memory]	   ; Is it more than whats in the var [cs:top_memory] ?
-	jg    .error			   ; If yes jump .error label
-	mov   word [cs:top_memory],ax	   ; If not it is now, put in [cs:top_memory] var.
+	push  dx
+	mov   dx,word [cs:end_memory]	   ; first free paragraph
+	mov   ax,dx
+	add   ax,bx			   ; new end of used memory
+	jc    .error
+	cmp   ax,word [cs:top_memory]
+	ja    .error			   ; not enough memory
+	mov   word [cs:end_memory],ax
+	mov   ax,dx			   ; return segment of allocated block
+	pop   dx
+	jmp   int21_ok
 .error:
+	pop   dx
 	mov   bx, word [cs:top_memory]	   ; return in bx free paragraphs
-	sub   bx, word [cs:end_memory]	   ; Show what memory is available.
-	stc				   ; Set CF ti 1
-	jmp   int21_error		   ; Jump to int21_error label
+	sub   bx, word [cs:end_memory]
+	mov   ax,8			   ; insufficient memory
+	jmp   int21_fail
 ;====================================================;
 ; End program                                        ;
 ;====================================================; 
 int21_4C:
-	jmp   shell_loop		     ; Jump to int20   label
+	jmp   shell_restart		     ; Terminate, back to the shell
 ;====================================================;
 ; int21 error                                        ;
 ;====================================================; 
 int21_error:
 	mov   ax,0xffff 		   ; Move AX 0xFFFF to show error
+; iret restores the caller's flags, so patch the saved copy to return CF
+int21_fail:
+	push  bp
+	mov   bp,sp
+	or    word [bp+6],1
+	pop   bp
+	iret
+int21_ok:
+	push  bp
+	mov   bp,sp
+	and   word [bp+6],0xFFFE
+	pop   bp
+	iret
 ;====================================================;
 ; int21 exit                                         ;
 ;====================================================;

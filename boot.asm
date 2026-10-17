@@ -16,7 +16,8 @@ TOTAL_HEADS	  equ  2
 ROOT_DIR_ENTRIES  equ 224
 ; sandos only supports floppy drives , so the defalut drive is always A drive floppy
 DEFAULT_DRIVE	  equ  0
-
+; the kernel is assembled with org 100h , so it is loaded at 2000:0100
+KERNEL_OFFSET	  equ  0x100
 
 ;  the initial header that makes a floppy readle by an os that can read fat12
 
@@ -87,23 +88,25 @@ done_reading_root_dir:
 find_kernel_file:
     mov si , kernel_file
     mov cx , 11
-    rep cmpsb
+    push di
+    repe cmpsb
+    pop di
     je found_kernel_file
-    dec dx
     add di , 32
+    dec dx
     jnz find_kernel_file
 
 kernel_file_not_found:
     mov si , kernel_file
     call print_string
     mov si , not_found_msg
-    call print_string
+    call reboot_keypress
 found_kernel_file:
     ;we have found the kernel file , now we should load the file into memory
     ;first we should read the fat-table into the buffer , use the first
     ;cluster to index into the fat table to find the next cluster ..etc and load
     ;the file into memory
-    mov ax , word [es:di + 0Fh]
+    mov ax , word [es:di + 1Ah]
     mov word [cluster_save] , ax
     mov cx ,0x03
     mov ax , 1
@@ -121,27 +124,30 @@ done_reading_fat_table:
     ;we have read the fat table
     mov bx ,0x2000
     mov es ,bx
-    mov ax , 31
-    mov cx , 3
+    mov word [kernel_start_offset] , KERNEL_OFFSET
 kernel_next_sector:
+    ; data area starts at logical sector 33 , cluster numbers start at 2
+    mov ax , word [cluster_save]
+    add ax , 31
+    mov cx , 3
     mov bx , word [kernel_start_offset]
     mov dx , 1
     call read_sector
     jnc done_reading_kernel_sector
-    call reset_floppy
-    jmp done_reading_fat_table
+    mov si , floppy_io_error
+    call reboot_keypress
 done_reading_kernel_sector:
     mov ax  , word [cluster_save]
     call fat12_next_cluster
     mov word [cluster_save] , ax
     cmp ax ,0FF8h
     jae load_file
-    add word [kernel_start_offset] ,32
+    add word [kernel_start_offset] ,512
     jmp kernel_next_sector
-    ; done loading the kernel file into memory , now jump to 2000 : 0000
+    ; done loading the kernel file into memory , now jump to 2000 : KERNEL_OFFSET
 load_file:
     xor dx , dx
-    jmp 2000:0000
+    jmp 0x2000:KERNEL_OFFSET
 
 ;--------------------------------------------------------------------------------------+
 ; procedure fat12_next_cluster                                                         |
@@ -231,16 +237,18 @@ print_string:
 ; output : cx := sector , dx = head , ax=cylinder            |
 ;------------------------------------------------------------+
 lba_to_chs:
+	   xor dx , dx
 	   mov bx ,  SECTORS_PER_TRACK
 	   div bx
 	   inc dx
 	   mov cx  , dx
+	   xor dx , dx
 	   mov bx , TOTAL_HEADS
 	   div bx
 	   ret
 ;-----------------------------------------------------------+
 ; procedure read_sector                                     |
-;    read number of sectors given into al register into     |
+;    read number of sectors given into dl register into     |
 ;    a buffer                                               |
 ;  input :                                                  |
 ;     ax : logical block address                            |
@@ -250,30 +258,43 @@ lba_to_chs:
 ;  output :                                                 |
 ;         contents of the sectors in [ES : BX ]             |
 ;         sets the carry flag on error                      |
+;         ax , bx , cx , dx are destroyed                   |
 ;-----------------------------------------------------------+
 read_sector:
-	    push cx
-	    push dx
+	    mov word [rs_lba] , ax
+	    mov byte [rs_count] , dl
+	    mov word [rs_tries] , cx
+	    mov word [rs_buffer] , bx
+.try:
+	    mov ax , word [rs_lba]
 	    call lba_to_chs
 	    mov dh , dl
 	    mov ch , al
+	    mov dl , DEFAULT_DRIVE
+	    mov al , byte [rs_count]
+	    mov bx , word [rs_buffer]
 	    mov ah , 0x02
-	    pop dx
-	    mov al , dl
-	    xor dx , dx
 	    int 13h
-	    pop cx
-	    dec cx
-	    jc	read_sector
+	    jnc .done
+	    xor ax , ax
+	    int 13h
+	    dec word [rs_tries]
+	    jnz .try
+	    stc
+.done:
 	    ret
 
+rs_lba		    dw 0
+rs_count	    db 0
+rs_tries	    dw 0
+rs_buffer	    dw 0
 boot_msg	    db 'Booting Sandos ....' , 0
 floppy_io_error     db 'Error during floppy i/o ' , 0
-not_found_msg	    db '   not found !'
+not_found_msg	    db '   not found !' , 0
 kernel_file	    db 'SANDOS  BIN',0
 cluster_save	    dw	0
 retry		    db	0
-kernel_start_offset dw 0
+kernel_start_offset dw KERNEL_OFFSET
 ; padd the rest of the bytes with zero and put the boot signature , 8086 is little endian ,the magic boot signature is 55aa
 boot_signature:
 		times 510 -($-$$) db 0

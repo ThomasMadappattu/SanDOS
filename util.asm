@@ -89,11 +89,11 @@ print_char:
 ;-----------------------------------------------------------------------------------------+
 print_string:
 	      
-	    mov ah , 0x0e
 	.print_string_loop:   
 	    lodsb
 	    or al , al
 	    jz .done_print_string
+	    mov ah , 0x0e
 	    mov bl , 0x07
 	    mov bh , 0x00
 	    int 0x10
@@ -147,28 +147,44 @@ read_string:
 		 xor dx,dx
       .input_loop:
 		 call read_char
-		 call print_char
 
 		 ; enter pressed ? then we are done
 		 cmp al ,0x0D
-		 je .done_reading
+		 je .enter_pressed
 
 		 ;backspace  pressed ? decrement counters etc
 		 cmp al , 0x08
 		 je .backspace_pressed
+
+		 ; ignore extended keys (al = 0)
+		 or al , al
+		 jz .input_loop
+		 call print_char
 		 inc dx
 		 stosb
 		 dec cx
 		 jz .max_reached
 		 jmp .input_loop
 
+       .enter_pressed:
+		 call print_char
+		 jmp .done_reading
+
        .backspace_pressed:
+		 ; nothing to erase, do not move the cursor over the prompt
 		 cmp dx ,0
 		 je .input_loop
 		 dec dx
 		 dec di
 		 inc cx
 		 mov byte [di] , 0
+		 ; move back , blank the character , move back again
+		 mov al , 0x08
+		 call print_char
+		 mov al , ' '
+		 call print_char
+		 mov al , 0x08
+		 call print_char
 		 jmp .input_loop
        .max_reached:
 		 mov al , 13
@@ -210,10 +226,12 @@ to_upper:
 ;--------------------------------------------------------+
 string_length:
 	  xor ax , ax
+   .length_loop:
 	  cmp byte [si] , 0
 	  je .end_string_length
 	  inc ax
 	  inc si
+	  jmp .length_loop
    .end_string_length:
 	  ret
 
